@@ -7,12 +7,10 @@ import re
 from datetime import datetime, timezone
 from typing import Optional, List
 
-# Pfade zu den JSON-Dateien
 INVESTMENTS_FILE = "/home/container/investments.json"
 USES_FILE = "/home/container/uses.json"
 BLACKLIST_FILE = "/home/container/blacklist.json"
 VALUES_FILE = "/home/container/cogs/values.json"
-
 
 def load_json(filepath: str):
     if os.path.exists(filepath):
@@ -23,57 +21,42 @@ def load_json(filepath: str):
                 return {}
     return {}
 
-
 def save_json(filepath: str, data):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
 
 class InvestmentSelectView(discord.ui.View):
-    """Ein View, das Buttons für die Auswahl eines Investments (bei Sell) bereitstellt."""
     def __init__(self, investments: List[dict], callback):
-        super().__init__(timeout=60)  # Timeout von 60 Sekunden
-        self.investments = investments  # Liste der passenden Investments
-        self.callback = callback  # Funktion, die mit dem ausgewählten Investment aufgerufen wird
-
-        # Erstelle für jeden Investment-Eintrag (maximal 5) einen Button
+        super().__init__(timeout=60)
+        self.investments = investments
+        self.callback = callback
         for idx, inv in enumerate(investments[:5], start=1):
             button = discord.ui.Button(label=str(idx), style=discord.ButtonStyle.primary)
-            # Speichere den Index als custom_id
             button.custom_id = str(idx)
-            # Füge den Callback hinzu
             button.callback = self.generate_callback(idx - 1)
             self.add_item(button)
-
     def generate_callback(self, index: int):
         async def button_callback(interaction: discord.Interaction):
             await self.callback(interaction, self.investments[index])
             self.stop()
         return button_callback
 
-
 class Investments(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
-        # Lade values.json, um Itemdaten und Preise zu erhalten
         if os.path.exists(VALUES_FILE):
             with open(VALUES_FILE, "r", encoding="utf-8") as f:
                 self.values_data = json.load(f)
         else:
             self.values_data = {}
-
-        # Sammle alle Item-Namen (für Autocomplete in /investement add)
         self.all_items = []
         for group in ["items", "event_items", "miscellaneous_items", "kukri_items"]:
             if group in self.values_data:
                 self.all_items.extend(list(self.values_data[group].keys()))
-
-
     def parse_cash(self, cash_str: str) -> int:
-        """Konvertiert einen Geldbetrag (z. B. '200k' oder '2M') in einen Integer."""
         cash_str = cash_str.strip().lower()
-        match = re.match(r'^(\d+(?:\.\d+)?)([km]?)$', cash_str)
+        match = re.match(r'^(\\d+(?:\.\d+)?)([km]?)$', cash_str)
         if not match:
             raise ValueError("Invalid cash amount. Use e.g. 200k or 2M.")
         number = float(match.group(1))
@@ -84,9 +67,7 @@ class Investments(commands.Cog):
             return int(number * 1000000)
         else:
             return int(number)
-
     def format_cash(self, amount: int) -> str:
-        """Formatiert einen Geldbetrag als String mit 'k' bzw. 'M'-Suffix."""
         if amount >= 1000000:
             s = f"{amount/1000000:.1f}M"
             return s.rstrip("0").rstrip(".")
@@ -94,11 +75,7 @@ class Investments(commands.Cog):
             return f"{amount/1000:.0f}k"
         else:
             return str(amount)
-
     def parse_price_string(self, price_str: str) -> int:
-        """Konvertiert einen Preisstring (z. B. '8.2M-8.3M' oder '70k') in einen Integer.
-           Bei Preisbereichen wird der Mittelwert genommen.
-        """
         if "-" in price_str:
             parts = price_str.split("-")
             if len(parts) != 2:
@@ -113,23 +90,17 @@ class Investments(commands.Cog):
             return (val1 + val2) // 2
         else:
             return self.parse_cash(price_str)
-
     def get_item_data(self, item_name: str):
-        """Sucht den Gegenstand in allen Gruppen der values.json."""
         for group in ["items", "event_items", "miscellaneous_items", "kukri_items"]:
             if group in self.values_data and item_name in self.values_data[group]:
                 return self.values_data[group][item_name]
         return None
-
     def get_item_category(self, item_name: str) -> Optional[str]:
-        """Ermittelt die Gruppe, zu der ein Item gehört."""
         for group in ["items", "event_items", "miscellaneous_items", "kukri_items"]:
             if group in self.values_data and item_name in self.values_data[group]:
                 return group
         return None
-
     def get_item_value(self, item_name: str, serial: int) -> int:
-        """Ermittelt den aktuellen Wert eines Items basierend auf seiner Seriennummer."""
         item_data = self.get_item_data(item_name)
         if not item_data:
             raise ValueError("Item not found.")
@@ -140,24 +111,17 @@ class Investments(commands.Cog):
                 upper_bound = max(r[0], r[1])
                 if lower_bound <= serial <= upper_bound:
                     return self.parse_price_string(price_obj["price"])
-            # Fallback: Letzten Preisbereich verwenden
             return self.parse_price_string(item_data["prices"][-1]["price"])
         elif "price" in item_data:
             return self.parse_price_string(item_data["price"])
         else:
             raise ValueError("No price information available.")
-
     def load_investments(self) -> dict:
-        """Lädt die investments.json als Dictionary."""
         data = load_json(INVESTMENTS_FILE)
         return data
-
     def save_investments(self, data: dict):
-        """Speichert das Dictionary in investments.json."""
         save_json(INVESTMENTS_FILE, data)
-
     def update_investment_uses(self, user_id: str):
-        """Aktualisiert die Investment-Nutzung in uses.json."""
         data = load_json(USES_FILE)
         if "investement_uses" not in data:
             data["investement_uses"] = 0
@@ -167,8 +131,6 @@ class Investments(commands.Cog):
         else:
             data[user_id] = 1
         save_json(USES_FILE, data)
-
-    # Autocomplete für /investement add (Item aus values.json)
     async def invest_item_autocomplete(self, interaction: discord.Interaction, current: str):
         current = current.lower()
         suggestions = [
@@ -176,26 +138,19 @@ class Investments(commands.Cog):
             for item in self.all_items if current in item.lower()
         ]
         return suggestions[:25]
-
-    # Autocomplete für /investement sell (nur Items, die der User besitzt)
     async def invest_sell_autocomplete(self, interaction: discord.Interaction, current: str):
         investments = self.load_investments().get(str(interaction.user.id), [])
-        # Sammle alle unique Item-Namen aus den Investments des Nutzers
         items = list({inv["item"] for inv in investments})
         suggestions = [
             app_commands.Choice(name=item, value=item)
             for item in items if current.lower() in item.lower()
         ]
         return suggestions[:25]
-
-
     investment = app_commands.Group(name="investement", description="Investment commands")
-
     @investment.command(name="add", description="Add a personal investment")
     @app_commands.describe(item="Select an item", price="Purchase price (e.g. 200k or 2M)", serial="Serial number")
     @app_commands.autocomplete(item=invest_item_autocomplete)
     async def invest_add(self, interaction: discord.Interaction, item: str, price: str, serial: int):
-        # Check blacklist
         blacklist = load_json(BLACKLIST_FILE)
         if str(interaction.user.id) in blacklist:
             embed = discord.Embed(
@@ -205,12 +160,8 @@ class Investments(commands.Cog):
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-
-        # Lade alle Investments des Nutzers
         inv_data = self.load_investments()
         user_inv = inv_data.get(str(interaction.user.id), [])
-
-        # Zähle Investments mit heutigem Datum (UTC, ISO-Datum, nur Tagvergleich)
         today = datetime.now(timezone.utc).date().isoformat()
         daily_count = sum(1 for inv in user_inv if inv["date"][:10] == today)
         if daily_count >= 3:
@@ -219,25 +170,19 @@ class Investments(commands.Cog):
                 ephemeral=True
             )
             return
-
         try:
             purchase_price = self.parse_cash(price)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
             return
-
         try:
             current_value = self.get_item_value(item, serial)
         except Exception as e:
             await interaction.response.send_message(f"Error retrieving item value: {e}", ephemeral=True)
             return
-
-        # Berechne die prozentuale Differenz (Gewinn/Verlust)
         diff = purchase_price - current_value
         percentage = (abs(diff) / current_value) * 100 if current_value != 0 else 0
         direction = "higher" if diff > 0 else "lower" if diff < 0 else "equal"
-
-        # Füge das Investment hinzu (Datum als ISO 8601, UTC)
         now_iso = datetime.now(timezone.utc).isoformat()
         new_inv = {
             "item": item,
@@ -248,15 +193,11 @@ class Investments(commands.Cog):
         user_inv.append(new_inv)
         inv_data[str(interaction.user.id)] = user_inv
         self.save_investments(inv_data)
-
-        # Update usage count
         self.update_investment_uses(str(interaction.user.id))
-
         response_msg = (f"Added `{item}` for `{self.format_cash(purchase_price)}`. This is "
                         f"{'+' if diff > 0 else '-'}{round(percentage)}% "
                         f"{direction} than the current value of `{self.format_cash(current_value)}`.")
         await interaction.response.send_message(response_msg, ephemeral=True)
-
     @investment.command(name="sell", description="Sell one of your investments")
     @app_commands.describe(item="Select the item to sell", serial="Optional serial (if needed)", sell_price="Optional sell price (e.g. 200k or 2M)")
     @app_commands.autocomplete(item=invest_sell_autocomplete)
@@ -264,18 +205,13 @@ class Investments(commands.Cog):
         user_id = str(interaction.user.id)
         inv_data = self.load_investments()
         user_inv = inv_data.get(user_id, [])
-
-        # Filtere Investments des Users, die zum angegebenen Item passen
         matching = [inv for inv in user_inv if inv["item"].lower() == item.lower()]
         if serial is not None:
             matching = [inv for inv in matching if inv["serial"] == serial]
-
         if not matching:
             await interaction.response.send_message("No matching investment found.", ephemeral=True)
             return
-
         async def finalize_sale(inter: discord.Interaction, chosen_inv: dict):
-            # Verwende den angegebenen sell_price oder ermittle den aktuellen Wert
             if sell_price is not None:
                 try:
                     sell_value = self.parse_cash(sell_price)
@@ -288,15 +224,10 @@ class Investments(commands.Cog):
                 except Exception as e:
                     await inter.response.send_message(f"Error retrieving current value: {e}", ephemeral=True)
                     return
-
             buy_value = chosen_inv["price"]
-            # Prozentuale Veränderung
             percent_change = ((sell_value - buy_value) / buy_value) * 100 if buy_value != 0 else 0
-            # Rundung: +17% Win oder -16% Lose
             percent_text = f"{'+' if percent_change > 0 else ''}{round(percent_change)}%"
             result_text = "Win" if percent_change > 0 else "Lose" if percent_change < 0 else "No change"
-
-            # Berechne gehaltene Tage (mindestens 1 Tag)
             try:
                 purchase_date = datetime.fromisoformat(chosen_inv["date"])
             except Exception:
@@ -304,14 +235,10 @@ class Investments(commands.Cog):
             held_days = (datetime.now(timezone.utc) - purchase_date).days
             if held_days < 1:
                 held_days = 1
-
-            # Hole den aktuellen Wert (unabhängig vom sell_price) zum Anzeigen
             try:
                 current_value = self.get_item_value(chosen_inv["item"], chosen_inv["serial"])
             except Exception:
                 current_value = 0
-
-            # Erstelle das finale Embed
             embed = discord.Embed(
                 title="Investement Sold <a:success:1337122638388269207>",
                 color=discord.Color.blue()
@@ -322,23 +249,15 @@ class Investments(commands.Cog):
             embed.add_field(name="Result", value=f"{result_text} ({percent_text})", inline=False)
             embed.add_field(name="Held for", value=f"{held_days} day(s)", inline=True)
             embed.add_field(name="Current value", value=self.format_cash(current_value), inline=True)
-
-            # Footer nur, wenn Server ID nicht 1310977344076251176 ist
             if not (interaction.guild and interaction.guild.id == 1310977344076251176):
                 embed.set_footer(text="https://discord.gg/45J959xRzJ")
-
-            # Entferne das verkaufte Investment
             user_inv.remove(chosen_inv)
             inv_data[user_id] = user_inv
             self.save_investments(inv_data)
-
             await inter.response.send_message(embed=embed, ephemeral=True)
-
         if len(matching) == 1:
-            # Nur ein passender Eintrag gefunden, sofort verkaufen
             await finalize_sale(interaction, matching[0])
         else:
-            # Mehrere passende Investments gefunden – Auswahl anbieten
             desc = "Items:\n"
             for idx, inv in enumerate(matching[:5], start=1):
                 desc += f"- {idx}. {inv['item']} serial {inv['serial']}\n"
@@ -348,7 +267,6 @@ class Investments(commands.Cog):
                 color=discord.Color.blue()
             )
             await interaction.response.send_message(embed=selection_embed, ephemeral=True, view=InvestmentSelectView(matching, finalize_sale))
-
     @investment.command(name="view", description="View your current investments")
     async def invest_view(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
@@ -357,9 +275,7 @@ class Investments(commands.Cog):
         if not user_inv:
             await interaction.response.send_message("You have no active investments.", ephemeral=True)
             return
-
         desc = ""
-        # Zeige maximal 5 Investments
         for inv in user_inv[:5]:
             item = inv["item"]
             serial = inv["serial"]
@@ -368,10 +284,8 @@ class Investments(commands.Cog):
                 current_value = self.get_item_value(item, serial)
             except Exception:
                 current_value = 0
-            # Berechne Prozentänderung
             percent_change = ((current_value - buy_value) / buy_value) * 100 if buy_value != 0 else 0
             percent_text = f"{'+' if percent_change > 0 else ''}{round(percent_change)}%"
-            # Falls es sich um event_items oder miscellaneous_items handelt, zeige "No serial"
             category = self.get_item_category(item)
             serial_text = str(serial) if category in ["items", "kukri_items"] else "No serial"
             desc += (f"**Item:** {item}\n"
@@ -388,6 +302,5 @@ class Investments(commands.Cog):
             embed.set_footer(text="https://discord.gg/45J959xRzJ")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-async def setup(bot: commands.Bot):
+def setup(bot: commands.Bot):
     await bot.add_cog(Investments(bot))
